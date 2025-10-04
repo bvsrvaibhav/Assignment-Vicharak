@@ -170,3 +170,6 @@ module tb;
   end
 
 endmodule
+
+//SIMULATION: https://edaplayground.com/x/DhFv
+
