@@ -1,0 +1,172 @@
+//design.sv
+`timescale 1 ns / 1 ps
+module address_translate (
+    input  wire SDA,
+    input  wire SCL,
+    input  wire rst,  
+    output reg  SDA1,
+    output reg  SDA2
+);
+
+  reg [2:0] state;
+  reg [3:0] cnt;
+  reg [7:0] address_reg, out_reg;
+  reg target; 
+  localparam IDLE       = 3'b000;
+  localparam ADDR   = 3'b001;
+  localparam TRANSLATE  = 3'b010;
+  localparam DATA  = 3'b011;
+  localparam STOP       = 3'b100;
+  localparam VIRTUAL1 = 7'h21;
+  localparam VIRTUAL2 = 7'h22;
+  localparam PHY    = 7'h48;
+
+  always @(posedge SCL or posedge rst) begin
+    if (rst) begin
+      state       <= IDLE;
+      SDA1        <= 1'b1;
+      SDA2        <= 1'b1;
+      address_reg <= 8'h00;
+      out_reg     <= 8'h00;
+      cnt         <= 4'd0;
+      target      <= 1'b0;
+    end else begin
+      case (state)
+        IDLE: begin
+          SDA1 <= 1'b1;
+          SDA2 <= 1'b1;
+          cnt <= 0;
+          target <= 0;
+          if (SDA == 0) 
+            state <= ADDR;
+        end
+
+        ADDR: begin
+          address_reg <= {address_reg[6:0], SDA};
+          cnt <= cnt + 1;
+          if (cnt == 7) begin
+            if (address_reg[7:1] == VIRTUAL1) begin
+              out_reg <= {PHY, address_reg[0]};
+              target <= 0;
+              state <= TRANSLATE;
+            end else if (address_reg[7:1] == VIRTUAL2) begin
+              out_reg <= {PHY, address_reg[0]};
+              target <= 1;
+              state <= TRANSLATE;
+            end else begin
+              state <= STOP;
+            end
+            cnt <= 0;
+          end
+        end
+
+        TRANSLATE: begin
+          if (target == 0) begin
+            SDA1 <= out_reg[7];
+            SDA2 <= 1'b1;
+          end else begin
+            SDA2 <= out_reg[7];
+            SDA1 <= 1'b1;
+          end
+          out_reg <= {out_reg[6:0], 1'b0};
+          cnt <= cnt + 1;
+          if (cnt == 7) begin
+            cnt <= 0;
+            state <= DATA;
+          end
+        end
+
+        DATA: begin
+          if (target == 0) begin
+            SDA1 <= SDA;
+            SDA2 <= 1'b1;
+          end else begin
+            SDA2 <= SDA;
+            SDA1 <= 1'b1;
+          end
+        end
+
+        STOP: begin
+          SDA1 <= 1'b1;
+          SDA2 <= 1'b1;
+          state <= IDLE;
+        end
+      endcase
+    end
+  end
+
+endmodule
+
+////////////////////////////////////////
+
+//testbench.sv
+
+`timescale 1ns/1ps
+
+module tb;
+
+  reg SCL, SDA, rst;
+  wire SDA1, SDA2;
+
+
+  address_translate dut (
+    .SDA(SDA),
+    .SCL(SCL),
+    .rst(rst),
+    .SDA1(SDA1),
+    .SDA2(SDA2)
+  );
+
+ 
+  initial begin
+    SCL = 0;
+    forever #50 SCL = ~SCL;  
+  end
+
+  task send_byte(input [7:0] data);
+    integer j;
+    begin
+      for (j = 7; j >= 0; j = j - 1) begin
+        SDA = data[j];
+        #30;        
+        @(posedge SCL); 
+      end
+    end
+  endtask
+
+  initial begin
+    $dumpfile("wave.vcd");
+    $dumpvars(0, tb);
+
+    SDA = 1;
+    rst = 1;
+    #100;
+    rst = 0;   
+    $display("[%0t] Reset released", $time);
+
+    #200;
+    SDA = 0;  
+    $display("[%0t] Start condition issued", $time);
+    #100;
+    send_byte({7'h21, 1'b0});  
+    SDA = 1;  
+    $display("[%0t] Stop condition issued", $time);
+
+    #2000;
+    rst = 1; #100; rst = 0;
+    $display("[%0t] Reset asserted & released", $time);
+    #100;
+    send_byte({7'h22, 1'b0}); 
+    SDA = 1;
+    $display("[%0t] Stop condition issued", $time);
+
+    #5000;
+    $display("[%0t] Simulation Finished", $time);
+    $finish;
+  end
+
+  initial begin
+    $monitor("[%0t] SDA=%b SDA1=%b SDA2=%b", $time, SDA, SDA1, SDA2);
+  end
+
+endmodule
